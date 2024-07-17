@@ -1,0 +1,151 @@
+---
+title: "Explore and Mine Data"
+author: "Julissa Zelaya"
+date: "CS5200 Spring 2024"
+output:
+  pdf_document: default
+  pdf: default
+subtitle: Practicum II
+---
+
+A pharmaceutical company has provided data regarding their products, sales, 
+representatives, and customers. In more specific detail, this data contains the
+products being sold by the company, the sales representatives and the
+territories they work in, the customer buying products within established
+countries, and the sales transactions of products. 
+
+```{r library, message=FALSE, warning=FALSE, echo=FALSE}
+## Libraries
+
+# Package names
+packages <- c("RMySQL", "DBI", "RSQLite", "ggplot2", "dplyr", "knitr", "pryr")
+
+# Install packages not yet installed
+installed_packages <- packages %in% rownames(installed.packages())
+if (any(!installed_packages)) {
+  install.packages(packages[!installed_packages])
+}
+
+# Packages loading
+invisible(lapply(packages, function(pkg) {
+  library(pkg, character.only = TRUE)
+}))
+```
+
+```{r db_connection, message=FALSE, warning=FALSE, echo=FALSE}
+# Database connection 
+db_host <- "sql5.freemysqlhosting.net"
+db_user <- "sql5699023"
+db_password <- "MiN2PMaGD1"
+db_name <- "sql5699023"
+db_port <- 3306
+
+# Establish connection
+mysql <- dbConnect(
+  RMySQL::MySQL(),
+  dbname = db_name,
+  host = db_host,
+  port = db_port,
+  user = db_user,
+  password = db_password
+)
+```
+
+## Analytical Query I
+Top five sales reps with the most sales broken down by year.
+```{sql connection=mysql, message=FALSE, warning=FALSE, echo=FALSE}
+SELECT year, repName, total_sales, rank
+FROM (
+    SELECT 
+        a.year, 
+        a.repName, 
+        a.total_sales,
+        COUNT(b.repName) + 1 AS rank
+    FROM (
+        SELECT year, repName, SUM(totalSales) AS total_sales
+        FROM rep_facts
+        GROUP BY year, repName
+    ) AS a
+    LEFT JOIN (
+        SELECT year, repName, SUM(totalSales) AS total_sales
+        FROM rep_facts
+        GROUP BY year, repName
+    ) AS b ON a.year = b.year AND a.total_sales < b.total_sales
+    GROUP BY a.year, a.repName, a.total_sales
+) AS ranked
+WHERE rank <= 5
+ORDER BY year, rank;
+
+```
+
+## Analytical Query II
+Total sold per product per quarter.
+```{sql connection=mysql, message=FALSE, warning=FALSE, echo=FALSE}
+SELECT productName, CONCAT(year, ' Q', quarter) AS year_quarter, SUM(totalUnitsSold) AS total_units
+FROM product_facts
+GROUP BY productID, year_quarter
+ORDER BY productID, year_quarter
+```
+
+## Analytical Query III
+Number of units sold per product per region.
+```{r units_query, message=FALSE, warning=FALSE, echo=FALSE}
+units_per_region <- "
+SELECT productName, territory AS region, SUM(totalUnitsSold) AS units_sold
+FROM product_facts
+GROUP BY productName, region
+ORDER BY productName, region
+"
+# Execute query from units_per_region
+query_units <- dbGetQuery(mysql, units_per_region)
+
+query_units <- query_units %>%
+  mutate(region = factor(region, levels = unique(region))) # keep region order
+```
+
+```{r units_visual, message=FALSE, warning=FALSE, echo=FALSE}
+# Plot
+ggplot(query_units, aes(x = region, y = units_sold, group = productName, color = productName)) +
+  geom_line() +
+  geom_point() + # Add points for clarity
+  theme_minimal() +
+  labs(title = "Units Sold Per Product Per Region",
+       x = "Region",
+       y = "Units Sold",
+       color = "Product") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) # Adjust for readability
+```
+
+## Analytical Query IV
+Average sales per sales rep over the years
+```{r rep_sales_query, message=FALSE, warning=FALSE, echo=FALSE}
+sales_per_rep <- "
+SELECT repName, year, AVG(totalSales) AS avg_sales
+FROM rep_facts
+GROUP BY repName, year
+ORDER BY repName, year;
+"
+
+# Execute sales_per_rep query
+rep_sales <- dbGetQuery(mysql, sales_per_rep)
+```
+
+```{r rep_sales_visual, message=FALSE, warning=FALSE, echo=FALSE}
+# Plot
+ggplot(rep_sales, aes(x = year, y = avg_sales, group = repName, color = repName)) +
+  geom_line() +  
+  geom_point() + 
+  theme_minimal() +
+  labs(title = "Average Sales Per Sales Rep Over the Years",
+       x = "Year",
+       y = "Average Sales",
+       color = "Sales Representative") +
+  scale_x_continuous(breaks = round(seq(min(rep_sales$year), max(rep_sales$year), by = 1),1)) # Adjust x-axis
+```
+
+
+```{r close_db, message=FALSE, warning=FALSE, echo=FALSE,}
+# Close database connection
+close <- dbDisconnect(mysql)
+```
+
